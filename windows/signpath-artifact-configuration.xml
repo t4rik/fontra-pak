@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  SignPath Artifact Configuration for fontra-pak
+
+  This configuration defines the structure of Windows artifacts for code signing.
+  GitHub Actions uploads artifacts as ZIP files, so the outer element is <zip-file>.
+
+  Signed artifacts:
+  - fontra-portable-windows-x64.zip: Contains FontraPak.exe (portable build)
+  - fontra-windows-x64.msi: MSI installer (signs MSI and embedded exe automatically)
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <!-- GitHub Actions wraps uploaded artifacts in a zip -->
+  <zip-file>
+    <!-- Windows portable zip - sign the executable inside -->
+    <pe-file path="Fontra Pak.exe">
+      <authenticode-sign />
+    </pe-file>
+
+    <!-- Windows MSI installer - signing MSI also signs embedded executables -->
+    <msi-file path="FontraPak-Windows-Installer.msi">
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

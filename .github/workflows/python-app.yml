@@ -127,6 +127,8 @@ jobs:
   windows-installer:
     needs: build-application
     runs-on: windows-latest
+    outputs:
+      artifact-id: ${{ steps.upload-unsigned-windows.outputs.artifact-id }}
 
     steps:
       - name: Git checkout
@@ -157,11 +159,53 @@ jobs:
           Set-Location windows
           wix build Product.wxs -arch x64 -d "Version=${{ env.VERSION }}" -ext WixToolset.UI.wixext -o "$env:GITHUB_WORKSPACE\dist\FontraPak-Windows-Installer.msi"
 
-      - name: Storing Windows MSI artifact
+      - name: List items in dist folder
+        run: dir dist
+
+      # Upload Windows artifacts together for SignPath signing
+      - name: Upload unsigned Windows artifacts for signing
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-windows-artifacts
+          path: dist
+
+  windows-sign:
+    name: Sign Windows Artifacts
+    needs: windows-installer
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Required for SignPath trusted build verification (OIDC)
+      actions: read     # Required for SignPath to read job details
+      contents: read    # Required for SignPath to download artifacts
+
+    steps:
+      - name: Submit to SignPath
+        id: signpath
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'fontra-pak'
+          signing-policy-slug: 'test-signing'
+          github-artifact-id: '${{ needs.windows-installer.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      - name: List signed artifacts
+        run: ls -la signed/
+
+      - name: Upload signed portable zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: FontraPak-Windows
+          path: signed/Fontra Pak.zip
+
+      - name: Upload signed MSI
         uses: actions/upload-artifact@v7
         with:
           name: FontraPak-Windows-Installer
-          path: dist/*.msi
+          path: signed/FontraPak-Windows-Installer.msi
 
   create-github-release:
     runs-on: ubuntu-latest
@@ -169,7 +213,7 @@ jobs:
     permissions:
       contents: write
 
-    needs: [build-application, windows-installer]
+    needs: [build-application, windows-sign]
     if: github.ref_type == 'tag'
 
     steps:
