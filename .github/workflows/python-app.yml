@@ -193,7 +193,7 @@ jobs:
           organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
           project-slug: 'fontra-pak'
           signing-policy-slug: 'test-signing'
-          github-artifact-id: '${{ needs.build-windows.outputs.artifact-id }}'
+          github-artifact-id: '${{ needs.windows-installer.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'signed'
 
