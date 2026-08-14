@@ -165,15 +165,16 @@ jobs:
       #     name: FontraPak-Windows-Installer
       #     path: dist/*.msi
 
+      - name: List items in dist folder
+        run: dir dist
+
       # Upload Windows artifacts together for SignPath signing
       - name: Upload unsigned Windows artifacts for signing
         id: upload-unsigned-windows
         uses: actions/upload-artifact@v7
         with:
           name: unsigned-windows-artifacts
-          path: |
-            "dist/Fontra Pak.exe"
-            dist/FontraPak-Windows-Installer.msi
+          path: dist
 
   windows-sign:
     name: Sign Windows Artifacts
