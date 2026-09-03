@@ -23,7 +23,7 @@ import psutil
 from fontra import __version__ as fontraVersion
 from fontra.backends import getFileSystemBackend, newFileSystemBackend
 from fontra.backends.copy import copyFont
-from fontra.backends.populate import populateBackend
+from fontra.backends.populate import createNewFontAndPopulate
 from fontra.core.classes import DiscreteFontAxis
 from fontra.core.server import FontraServer, findFreeTCPPort
 from fontra.core.urlfragment import dumpURLFragment
@@ -294,7 +294,7 @@ class FontraMainWidget(QMainWindow):
 
         # Create a new empty project on disk
         try:
-            asyncio.run(createNewFont(fontPath))
+            asyncio.run(createNewFontAndPopulate(fontPath))
         except Exception as e:
             showMessageDialog("The new font could not be saved", repr(e))
             return
@@ -540,13 +540,6 @@ async def exportFontToPathAsync(sourcePath, destPath, fileExtension):
         destBackend = newFileSystemBackend(destPath)
         async with aclosing(sourceBackend), aclosing(destBackend):
             await copyFont(sourceBackend, destBackend)
-
-
-async def createNewFont(fontPath):
-    # Create a new empty project on disk
-    destBackend = newFileSystemBackend(fontPath)
-    await populateBackend(destBackend)
-    await destBackend.aclose()
 
 
 def openFile(path, port):
