@@ -1,12 +1,18 @@
+import os
+import sys
+
+if sys.platform == "linux" and "QT_QPA_PLATFORM" not in os.environ:
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if "gnome" in desktop or "mutter" in desktop:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 import asyncio
 import json
 import logging
 import multiprocessing
-import os
 import pathlib
 import secrets
 import signal
-import sys
 import tempfile
 import threading
 import traceback
