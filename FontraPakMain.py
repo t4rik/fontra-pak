@@ -61,21 +61,15 @@ font-size: 18px;
 padding: 16px;
 """
 
-neutralCSS = (
-    """
+neutralCSS = """
 background-color: rgba(255,255,255,128);
 border: 5px solid lightgray;
-"""
-    + commonCSS
-)
+""" + commonCSS
 
-droppingCSS = (
-    """
+droppingCSS = """
 background-color: rgba(255,255,255,64);
 border: 5px solid gray;
-"""
-    + commonCSS
-)
+""" + commonCSS
 
 mainText = """
 <span style="font-size: 40px;">Drop font files here</span>
@@ -120,6 +114,7 @@ exportFileTypesMapping = {
 exportExtensionMapping = {v: k for k, v in exportFileTypesMapping.items()}
 
 latestReleasePageURL = "https://github.com/fontra/fontra-pak/releases/latest"
+
 
 def runningAsFlatpak() -> bool:
     # Every Flatpak sandbox bind-mounts this file in, regardless of app ID.
