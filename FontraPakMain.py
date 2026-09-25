@@ -61,15 +61,21 @@ font-size: 18px;
 padding: 16px;
 """
 
-neutralCSS = """
+neutralCSS = (
+    """
 background-color: rgba(255,255,255,128);
 border: 5px solid lightgray;
-""" + commonCSS
+"""
+    + commonCSS
+)
 
-droppingCSS = """
+droppingCSS = (
+    """
 background-color: rgba(255,255,255,64);
 border: 5px solid gray;
-""" + commonCSS
+"""
+    + commonCSS
+)
 
 mainText = """
 <span style="font-size: 40px;">Drop font files here</span>
