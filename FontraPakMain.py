@@ -30,8 +30,10 @@ from fontra.core.urlfragment import dumpURLFragment
 from fontra.filesystem.projectmanager import FileSystemProjectManager, fileExtensions
 from fontTools.ttLib.woff2 import compress as woff2Compress
 from PyQt6.QtCore import (
+    QDir,
     QEvent,
     QFileInfo,
+    QModelIndex,
     QObject,
     QPoint,
     QSettings,
@@ -40,11 +42,12 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QFileSystemModel, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QDockWidget,
     QFileDialog,
     QFileIconProvider,
     QGridLayout,
@@ -56,6 +59,7 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSizePolicy,
+    QTreeView,
     QWidget,
 )
 
@@ -237,6 +241,84 @@ class OpenFontDialog(QFileDialog):
         self.done(QDialog.DialogCode.Accepted)
 
 
+class FontExplorerModel(QFileSystemModel):
+    """File system model for the workspace explorer. Font "files" that are
+    really folders (.ufo, .glyphspackage, ...) are presented as leaves, so
+    their internals never show up in the tree."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setIconProvider(FontFolderIconProvider())
+        self.setReadOnly(True)
+        self.setFilter(
+            QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
+        )
+        # Name filters only apply to files, folders are always listed
+        self.setNameFilters([f"*{ext}" for ext in sorted(fileExtensions)])
+        self.setNameFilterDisables(False)
+
+    def _isFontFolder(self, index):
+        return (
+            index.isValid()
+            and self.isDir(index)
+            and pathlib.Path(self.filePath(index)).suffix.lower() in fileExtensions
+        )
+
+    def hasChildren(self, parent=QModelIndex()):
+        if self._isFontFolder(parent):
+            return False
+        return super().hasChildren(parent)
+
+    def canFetchMore(self, parent):
+        if self._isFontFolder(parent):
+            return False
+        return super().canFetchMore(parent)
+
+
+class FontExplorer(QDockWidget):
+    """VS Code style workspace explorer: pick a folder, browse it, and open the
+    fonts that Fontra supports."""
+
+    def __init__(self, parent, openFontCallback):
+        super().__init__("Explorer", parent)
+        self.setObjectName("FontExplorer")
+        self.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+        )
+        self.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.openFontCallback = openFontCallback
+
+        self.model = FontExplorerModel(self)
+        self.tree = QTreeView(self)
+        self.tree.setModel(self.model)
+        self.tree.setHeaderHidden(True)
+        self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
+        self.tree.setUniformRowHeights(True)
+        # Only the name column is interesting: hide size, type, date modified
+        for column in range(1, self.model.columnCount()):
+            self.tree.setColumnHidden(column, True)
+        self.tree.activated.connect(self.itemActivated)
+        self.setWidget(self.tree)
+        self.setMinimumWidth(180)
+
+        self.folder = None
+
+    def setFolder(self, folder):
+        self.folder = folder
+        rootIndex = self.model.setRootPath(folder)
+        self.tree.setRootIndex(rootIndex)
+        self.setWindowTitle(f"Explorer: {os.path.basename(folder) or folder}")
+
+    def itemActivated(self, index):
+        path = self.model.filePath(index)
+        if isFontPath(path):
+            self.openFontCallback(path)
+        # Regular folders expand/collapse by themselves on activation
+
+
 class FontraMainWidget(QMainWindow):
     def __init__(self, port):
         super().__init__()
@@ -250,9 +332,35 @@ class FontraMainWidget(QMainWindow):
         actionOpen = QAction("&Open Font...", self)
         actionOpen.setShortcut(QKeySequence("Ctrl+O"))
         actionOpen.triggered.connect(self.openFont)
+        actionOpenFolder = QAction("Open &Folder...", self)
+        actionOpenFolder.setShortcuts(
+            [QKeySequence("Ctrl+K, Ctrl+O"), QKeySequence("Ctrl+Shift+O")]
+        )
+        actionOpenFolder.triggered.connect(self.openFolder)
+        actionCloseFolder = QAction("&Close Folder", self)
+        actionCloseFolder.triggered.connect(self.closeFolder)
         fileMenu = menuBar.addMenu("&File")
         fileMenu.addAction(actionNew)
         fileMenu.addAction(actionOpen)
+        fileMenu.addSeparator()
+        fileMenu.addAction(actionOpenFolder)
+        fileMenu.addAction(actionCloseFolder)
+
+        self.explorer = FontExplorer(self, lambda path: openFile(path, self.port))
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.explorer)
+        viewMenu = menuBar.addMenu("&View")
+        actionToggleExplorer = self.explorer.toggleViewAction()
+        actionToggleExplorer.setText("&Explorer")
+        actionToggleExplorer.setShortcut(QKeySequence("Ctrl+B"))
+        viewMenu.addAction(actionToggleExplorer)
+
+        explorerFolder = applicationSettings.value("explorerFolder", "")
+        if explorerFolder and os.path.isdir(explorerFolder):
+            self.explorer.setFolder(explorerFolder)
+            if not applicationSettings.value("explorerVisible", True, type=bool):
+                self.explorer.hide()
+        else:
+            self.explorer.hide()
 
         self.setWindowTitle("Fontra Pak")
         self.resize(720, 480)
@@ -356,6 +464,8 @@ class FontraMainWidget(QMainWindow):
 
         applicationSettings.setValue("size", self.size())
         applicationSettings.setValue("pos", self.pos())
+        if self.explorer.folder:
+            applicationSettings.setValue("explorerVisible", self.explorer.isVisible())
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -428,6 +538,27 @@ class FontraMainWidget(QMainWindow):
 
         for fontPath in fontPaths:
             openFile(fontPath, self.port)
+
+    def openFolder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open Folder...", self.explorer.folder or self.activeFolder
+        )
+        if not folder:
+            # User cancelled
+            return
+
+        applicationSettings.setValue("explorerFolder", folder)
+        applicationSettings.setValue("activeFolder", folder)
+        if not self.explorer.isVisible():
+            # Make room for the explorer so the main content doesn't get squeezed
+            self.resize(self.width() + 260, self.height())
+        self.explorer.setFolder(folder)
+        self.explorer.show()
+
+    def closeFolder(self):
+        applicationSettings.remove("explorerFolder")
+        self.explorer.folder = None
+        self.explorer.hide()
 
     def messageFromServer(self, item):
         action, arguments = item
