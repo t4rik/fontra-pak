@@ -6,6 +6,7 @@ import os
 import pathlib
 import secrets
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -42,7 +43,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QFileSystemModel, QKeySequence
+from PyQt6.QtGui import QAction, QFileSystemModel, QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -241,6 +242,57 @@ class OpenFontDialog(QFileDialog):
         self.done(QDialog.DialogCode.Accepted)
 
 
+def getTextScalingFactor() -> float:
+    """Qt does not honor GNOME's "Large Text" accessibility setting, which is
+    stored as org.gnome.desktop.interface text-scaling-factor. Read it so we can
+    apply it ourselves. FONTRA_PAK_TEXT_SCALE overrides it, for testing."""
+
+    value = os.environ.get("FONTRA_PAK_TEXT_SCALE")
+    if value is None and sys.platform == "linux":
+        env = dict(os.environ)
+        if "LD_LIBRARY_PATH_ORIG" in env:  # undo the PyInstaller bundle setup
+            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+        try:
+            value = subprocess.run(
+                [
+                    "gsettings",
+                    "get",
+                    "org.gnome.desktop.interface",
+                    "text-scaling-factor",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                env=env,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return 1.0
+    try:
+        factor = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return factor if 0.5 <= factor <= 3.0 else 1.0
+
+
+explorerCSS = """
+QTreeView {
+    border: none;
+    background: palette(base);
+}
+QTreeView::item {
+    padding: 5px 4px;
+    border-radius: 6px;
+}
+QTreeView::item:hover {
+    background: palette(alternate-base);
+}
+QTreeView::item:selected {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+}
+"""
+
+
 class FontExplorerModel(QFileSystemModel):
     """File system model for the workspace explorer. Font "files" that are
     really folders (.ufo, .glyphspackage, ...) are presented as leaves, so
@@ -297,6 +349,12 @@ class FontExplorer(QDockWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self.tree.setUniformRowHeights(True)
+        self.tree.setStyleSheet(explorerCSS)
+        # Follow the system "Large Text" setting, which Qt doesn't apply by itself
+        font = QFont(QApplication.font())
+        font.setPointSizeF(font.pointSizeF() * getTextScalingFactor())
+        self.tree.setFont(font)
+        self.tree.setIndentation(int(self.tree.indentation() * getTextScalingFactor()))
         # Only the name column is interesting: hide size, type, date modified
         for column in range(1, self.model.columnCount()):
             self.tree.setColumnHidden(column, True)
