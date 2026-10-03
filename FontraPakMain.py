@@ -43,7 +43,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QFileSystemModel, QFont, QKeySequence
+from PyQt6.QtGui import QAction, QFileSystemModel, QFont, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -274,22 +274,38 @@ def getTextScalingFactor() -> float:
     return factor if 0.5 <= factor <= 3.0 else 1.0
 
 
-explorerCSS = """
-QTreeView {
+def explorerStyleSheet(palette):
+    """Approximation of the libadwaita sidebar look: flat, roomy rows, with soft
+    translucent hover and selection colors derived from the current palette, so
+    it follows light/dark mode."""
+
+    def rgba(role, alpha):
+        c = palette.color(role)
+        return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
+
+    text = QPalette.ColorRole.Text
+    window = palette.color(QPalette.ColorRole.Window).name()
+    return f"""
+QTreeView {{
     border: none;
-    background: palette(base);
-}
-QTreeView::item {
-    padding: 5px 4px;
+    outline: 0;
+    show-decoration-selected: 0;
+    background: {window};
+}}
+QTreeView::item {{
+    padding: 6px 4px;
+    margin: 1px 0px;
     border-radius: 6px;
-}
-QTreeView::item:hover {
-    background: palette(alternate-base);
-}
-QTreeView::item:selected {
-    background: palette(highlight);
-    color: palette(highlighted-text);
-}
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
+}}
+QTreeView::item:hover {{
+    background: {rgba(text, 0.08)};
+}}
+QTreeView::item:selected {{
+    background: {rgba(text, 0.15)};
+    color: palette(text);
+}}
 """
 
 
@@ -334,13 +350,17 @@ class FontExplorer(QDockWidget):
     def __init__(self, parent, openFontCallback):
         super().__init__("Explorer", parent)
         self.setObjectName("FontExplorer")
-        self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-            | QDockWidget.DockWidgetFeature.DockWidgetMovable
-        )
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
-        )
+        # The window's own titlebar is styled by the platform, but Qt draws dock
+        # title bars itself in a non-native way. Use a flat heading instead.
+        self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.heading = QLabel("Explorer")
+        headingFont = QFont(QApplication.font())
+        headingFont.setBold(True)
+        headingFont.setPointSizeF(headingFont.pointSizeF() * getTextScalingFactor())
+        self.heading.setFont(headingFont)
+        self.heading.setContentsMargins(14, 10, 14, 6)
+        self.setTitleBarWidget(self.heading)
         self.openFontCallback = openFontCallback
 
         self.model = FontExplorerModel(self)
@@ -349,7 +369,7 @@ class FontExplorer(QDockWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self.tree.setUniformRowHeights(True)
-        self.tree.setStyleSheet(explorerCSS)
+        self.applyStyle()
         # Follow the system "Large Text" setting, which Qt doesn't apply by itself
         font = QFont(QApplication.font())
         font.setPointSizeF(font.pointSizeF() * getTextScalingFactor())
@@ -364,11 +384,23 @@ class FontExplorer(QDockWidget):
 
         self.folder = None
 
+    def applyStyle(self):
+        self.tree.setStyleSheet(explorerStyleSheet(self.palette()))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "tree"):
+            # Light/dark mode switched while running
+            self.applyStyle()
+
     def setFolder(self, folder):
         self.folder = folder
         rootIndex = self.model.setRootPath(folder)
         self.tree.setRootIndex(rootIndex)
-        self.setWindowTitle(f"Explorer: {os.path.basename(folder) or folder}")
+        name = os.path.basename(folder) or folder
+        self.heading.setText(name)
+        self.heading.setToolTip(folder)
+        self.setWindowTitle(f"Explorer: {name}")
 
     def itemActivated(self, index):
         path = self.model.filePath(index)
