@@ -18,7 +18,9 @@ To run the main program directly, set up a Python 3.11 (or higher) virtual envir
 
 Fontra Pak can also be run directly from its Python environment on Linux.
 
-This avoids the self-contained PyInstaller bundle and uses the libraries provided by the host system, including the host Qt, Wayland/X11, fontconfig and graphics stack.
+This avoids the self-contained PyInstaller bundle. The app runs from a Python virtual environment and uses the host's Wayland/X11, fontconfig and graphics libraries.
+
+Requirements: git and network access. Python 3.11 or newer and Node.js 24 or newer (with npm) are also needed. If either is missing, the installer offers to download it (Python with uv, Node.js with nvm). Run `./linux/install.sh --yes` to accept the downloads without prompts. A Python downloaded with uv stays in `~/.local/share/uv/python`; `uninstall.sh` does not remove it.
 
 To install for the current user:
 
