@@ -31,6 +31,7 @@ from fontra.core.urlfragment import dumpURLFragment
 from fontra.filesystem.projectmanager import FileSystemProjectManager, fileExtensions
 from fontTools.ttLib.woff2 import compress as woff2Compress
 from PyQt6.QtCore import (
+    QCoreApplication,
     QDir,
     QEvent,
     QFileInfo,
@@ -41,6 +42,7 @@ from PyQt6.QtCore import (
     QSize,
     Qt,
     QTimer,
+    QUrl,
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QFileSystemModel, QFont, QKeySequence, QPalette
@@ -60,9 +62,17 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSizePolicy,
+    QTabBar,
+    QTabWidget,
     QTreeView,
     QWidget,
 )
+
+try:
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+except ImportError:  # Built-in browser is optional: fall back to the system browser
+    QWebEnginePage = QWebEngineView = None
 
 commonCSS = """
 border-radius: 20px;
@@ -160,6 +170,89 @@ def openURL(url):
 
 
 applicationSettings = QSettings("xyz.fontra", "FontraPak")
+
+
+localHosts = {"localhost", "127.0.0.1"}
+
+# Set by the main window once the built-in browser exists
+_builtInBrowser = None
+
+
+def builtInBrowserAvailable() -> bool:
+    return QWebEngineView is not None
+
+
+def openFontraURL(url):
+    """Open a Fontra URL in the built-in browser if enabled, else in the system
+    browser."""
+    if _builtInBrowser is not None and applicationSettings.value(
+        "openInBuiltInBrowser", True, type=bool
+    ):
+        _builtInBrowser.openTab(url)
+    else:
+        openURL(url)
+
+
+if QWebEngineView is not None:
+
+    class FontraWebPage(QWebEnginePage):
+        def __init__(self, newTabPage, parent=None):
+            super().__init__(parent)
+            self._newTabPage = newTabPage
+
+        def acceptNavigationRequest(self, url, navigationType, isMainFrame):
+            if url.scheme() in {"http", "https"} and url.host() not in localHosts:
+                # External links belong in the system browser
+                openURL(url.toString())
+                return False
+            return super().acceptNavigationRequest(url, navigationType, isMainFrame)
+
+        def createWindow(self, windowType):
+            return self._newTabPage()
+
+    class BuiltInBrowser(QTabWidget):
+        """A tab widget with a fixed home tab, and one web view per open font."""
+
+        def __init__(self, homeWidget, parent=None):
+            super().__init__(parent)
+            self.setDocumentMode(True)
+            self.setTabsClosable(True)
+            self.addTab(homeWidget, "Home")
+            self.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
+            self.tabCloseRequested.connect(self.closeTab)
+
+        def _newView(self):
+            view = QWebEngineView(self)
+            view.setPage(FontraWebPage(self._newBlankPage, view))
+            self._connectView(view)
+            index = self.addTab(view, "Loading...")
+            self.setCurrentIndex(index)
+            return view
+
+        def _newBlankPage(self):
+            return self._newView().page()
+
+        def _connectView(self, view):
+            view.titleChanged.connect(lambda title: self._setTitle(view, title))
+
+        def _setTitle(self, view, title):
+            index = self.indexOf(view)
+            if index >= 0:
+                self.setTabText(index, title or "Fontra")
+                self.setTabToolTip(index, title)
+
+        def openTab(self, url):
+            self._newView().setUrl(QUrl(url))
+
+        def closeTab(self, index):
+            if index == 0:
+                return
+            view = self.widget(index)
+            self.removeTab(index)
+            view.deleteLater()
+
+        def closeCurrentTab(self):
+            self.closeTab(self.currentIndex())
 
 
 class FontraApplication(QApplication):
@@ -537,8 +630,41 @@ class FontraMainWidget(QMainWindow):
 
         widget = QWidget()
         widget.setLayout(layout)
-        self.setCentralWidget(widget)
+
+        global _builtInBrowser
+        if builtInBrowserAvailable():
+            self.browser = BuiltInBrowser(widget)
+            _builtInBrowser = self.browser
+            self.setCentralWidget(self.browser)
+        else:
+            self.browser = None
+            self.setCentralWidget(widget)
+
+        self.setUpBrowserActions(viewMenu, fileMenu)
         self.show()
+
+    def setUpBrowserActions(self, viewMenu, fileMenu):
+        actionBuiltIn = QAction("Open Fonts in &Built-in Browser", self)
+        actionBuiltIn.setCheckable(True)
+        actionBuiltIn.setChecked(
+            self.browser is not None
+            and applicationSettings.value("openInBuiltInBrowser", True, type=bool)
+        )
+        actionBuiltIn.setEnabled(self.browser is not None)
+        actionBuiltIn.toggled.connect(
+            lambda checked: applicationSettings.setValue(
+                "openInBuiltInBrowser", checked
+            )
+        )
+        viewMenu.addSeparator()
+        viewMenu.addAction(actionBuiltIn)
+
+        if self.browser is not None:
+            actionCloseTab = QAction("Close &Tab", self)
+            actionCloseTab.setShortcut(QKeySequence("Ctrl+W"))
+            actionCloseTab.triggered.connect(self.browser.closeCurrentTab)
+            fileMenu.addSeparator()
+            fileMenu.addAction(actionCloseTab)
 
     def closeEvent(self, event):
         if self.openProjects:
@@ -905,7 +1031,7 @@ def openFile(path, port):
     view = "editor" if sampleText else "fontoverview"
 
     readOnlyStr = "&read-only=true" if readOnly else ""
-    openURL(
+    openFontraURL(
         f"http://localhost:{port}/{view}.html?project={path}{readOnlyStr}{urlFragment}"
     )
 
@@ -1032,6 +1158,9 @@ def main():
         target=runFontraServer, args=(host, port, queue)
     )
     serverProcess.start()
+
+    if builtInBrowserAvailable():
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = FontraApplication(sys.argv, port)
 
